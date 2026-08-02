@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { transcribeAudio } from '../api/speech';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
+import { getUserFacingError } from '../utils/errors';
 
 export default function VoiceScreen() {
   const {
@@ -21,6 +22,7 @@ export default function VoiceScreen() {
   } = useVoiceRecorder();
   const [transcript, setTranscript] = useState('');
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
 
   const handleRecordPress = async () => {
     if (isRecording) {
@@ -31,6 +33,7 @@ export default function VoiceScreen() {
           return;
         }
 
+        setTranscriptionError(null);
         setIsTranscribing(true);
         setTranscript('Uploading and transcribing...');
 
@@ -38,11 +41,8 @@ export default function VoiceScreen() {
         setTranscript(result || 'No speech detected.');
       } catch (transcriptionError) {
         console.error(transcriptionError);
-        setTranscript(
-          transcriptionError instanceof Error
-            ? transcriptionError.message
-            : 'Transcription failed.'
-        );
+        setTranscriptionError(getUserFacingError(transcriptionError));
+        setTranscript('');
       } finally {
         setIsTranscribing(false);
       }
@@ -50,6 +50,7 @@ export default function VoiceScreen() {
     }
 
     setTranscript('');
+    setTranscriptionError(null);
     await startRecording();
   };
 
@@ -81,8 +82,8 @@ export default function VoiceScreen() {
           <Text style={styles.statusText}>{statusMessage}</Text>
         </View>
 
-        {error ? (
-          <Text style={styles.errorText}>Error: {error}</Text>
+        {error || transcriptionError ? (
+          <Text style={styles.errorText}>Error: {error || transcriptionError}</Text>
         ) : null}
 
         <View style={styles.transcriptBox}>

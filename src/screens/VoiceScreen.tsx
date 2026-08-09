@@ -6,9 +6,10 @@ import {
   TouchableOpacity,
   View,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
-import { generateAssistantReply } from '../api/chat';
 import { transcribeAudio } from '../api/speech';
+import { useConversation } from '../hooks/useConversation';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { getUserFacingError } from '../utils/errors';
 
@@ -17,64 +18,47 @@ export default function VoiceScreen() {
     isRecording,
     isBusy,
     statusMessage,
-    error,
+    error: recorderError,
     startRecording,
     stopRecording,
   } = useVoiceRecorder();
-  const [transcript, setTranscript] = useState('');
-  const [assistantReply, setAssistantReply] = useState('');
+  const {
+    messages,
+    isLoading: isProcessing,
+    error: conversationError,
+    sendPrompt,
+  } = useConversation();
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [isGeneratingReply, setIsGeneratingReply] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
-  const [replyError, setReplyError] = useState<string | null>(null);
 
   const handleRecordPress = async () => {
     if (isRecording) {
       try {
         const filePath = await stopRecording();
         if (!filePath) {
-          setTranscript('No recording file available.');
+          setTranscriptionError('No recording file available.');
           return;
         }
 
         setTranscriptionError(null);
-        setReplyError(null);
         setIsTranscribing(true);
-        setIsGeneratingReply(false);
-        setTranscript('Uploading and transcribing...');
-        setAssistantReply('');
 
         const result = await transcribeAudio(filePath);
         const nextTranscript = result || 'No speech detected.';
-        setTranscript(nextTranscript);
 
         if (nextTranscript && nextTranscript !== 'No speech detected.') {
-          setIsGeneratingReply(true);
-          try {
-            const reply = await generateAssistantReply(nextTranscript);
-            setAssistantReply(reply || 'No response generated.');
-          } catch (replyErr) {
-            console.error(replyErr);
-            setReplyError(getUserFacingError(replyErr));
-            setAssistantReply('');
-          } finally {
-            setIsGeneratingReply(false);
-          }
+          await sendPrompt(nextTranscript);
         }
       } catch (transcriptionErr) {
         console.error(transcriptionErr);
         setTranscriptionError(getUserFacingError(transcriptionErr));
-        setTranscript('');
       } finally {
         setIsTranscribing(false);
       }
       return;
     }
 
-    setTranscript('');
-    setAssistantReply('');
     setTranscriptionError(null);
-    setReplyError(null);
     await startRecording();
   };
 
@@ -87,12 +71,12 @@ export default function VoiceScreen() {
           style={[
             styles.button,
             isRecording ? styles.buttonRecording : styles.buttonIdle,
-            (isBusy || isTranscribing) && styles.buttonDisabled,
+            (isBusy || isTranscribing || isProcessing) && styles.buttonDisabled,
           ]}
           onPress={handleRecordPress}
-          disabled={isBusy || isTranscribing || isGeneratingReply}
+          disabled={isBusy || isTranscribing || isProcessing}
         >
-          {isBusy || isTranscribing || isGeneratingReply ? (
+          {isBusy || isTranscribing || isProcessing ? (
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.buttonText}>
@@ -106,21 +90,37 @@ export default function VoiceScreen() {
           <Text style={styles.statusText}>{statusMessage}</Text>
         </View>
 
-        {error || transcriptionError || replyError ? (
-          <Text style={styles.errorText}>Error: {error || transcriptionError || replyError}</Text>
+        {recorderError || transcriptionError || conversationError ? (
+          <Text style={styles.errorText}>
+            Error: {recorderError || transcriptionError || conversationError}
+          </Text>
         ) : null}
 
-        <View style={styles.transcriptBox}>
-          <Text style={styles.label}>Transcript</Text>
-          <Text style={styles.transcriptText}>{transcript || 'No transcript yet.'}</Text>
-        </View>
-
-        <View style={styles.replyBox}>
-          <Text style={styles.label}>Assistant</Text>
-          <Text style={styles.transcriptText}>
-            {isGeneratingReply ? 'Generating reply...' : assistantReply || 'No reply yet.'}
-          </Text>
-        </View>
+        <ScrollView style={styles.messagesContainer} contentContainerStyle={styles.messagesContent}>
+          {messages.length === 0 ? (
+            <Text style={styles.emptyText}>Record your voice to start a conversation.</Text>
+          ) : (
+            messages.map(message => (
+              <View
+                key={message.id}
+                style={[
+                  styles.messageBubble,
+                  message.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                ]}
+              >
+                <Text style={styles.messageRole}>{message.role.toUpperCase()}</Text>
+                <Text
+                  style={[
+                    styles.messageText,
+                    message.role === 'user' ? styles.userBubbleText : styles.assistantBubbleText,
+                  ]}
+                >
+                  {message.content}
+                </Text>
+              </View>
+            ))
+          )}
+        </ScrollView>
       </View>
     </SafeAreaView>
   );
@@ -183,19 +183,53 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
-  replyBox: {
+  messagesContainer: {
     flex: 1,
-    backgroundColor: '#eef4ff',
-    borderRadius: 12,
-    padding: 16,
+    marginTop: 12,
+  },
+  messagesContent: {
+    paddingBottom: 16,
+  },
+  emptyText: {
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 24,
+  },
+  messageBubble: {
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
     shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  userBubble: {
+    backgroundColor: '#1c64f2',
+    alignSelf: 'flex-end',
+  },
+  assistantBubble: {
+    backgroundColor: '#eef4ff',
+    alignSelf: 'flex-start',
+  },
+  messageRole: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 6,
+    color: '#ffffff',
+  },
+  assistantBubbleText: {
+    color: '#111827',
+  },
+  userBubbleText: {
+    color: '#ffffff',
+  },
+  messageText: {
+    fontSize: 15,
+    lineHeight: 22,
   },
   transcriptText: {
-    marginTop: 8,
-    color: '#111827',
+    fontSize: 15,
     lineHeight: 22,
   },
   errorText: {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -12,6 +12,7 @@ import { transcribeAudio } from '../api/speech';
 import { useConversation } from '../hooks/useConversation';
 import { useVoiceRecorder } from '../hooks/useVoiceRecorder';
 import { getUserFacingError } from '../utils/errors';
+import { useSpeechPlayback } from '../hooks/useSpeechPlayback';
 
 export default function VoiceScreen() {
   const {
@@ -28,6 +29,7 @@ export default function VoiceScreen() {
     error: conversationError,
     sendPrompt,
   } = useConversation();
+  const { isSpeaking: isSpeakingPlayback, play, cancel } = useSpeechPlayback();
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
 
@@ -121,9 +123,30 @@ export default function VoiceScreen() {
             ))
           )}
         </ScrollView>
+        {/* Play assistant messages via native TTS */}
+        {messages.length > 0 && (
+          <AutoPlayAssistantMessage messages={messages} play={play} />
+        )}
       </View>
     </SafeAreaView>
   );
+}
+
+function AutoPlayAssistantMessage({
+  messages,
+  play,
+}: {
+  messages: any[];
+  play: (text: string) => Promise<void>;
+}) {
+  useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (last && last.role === 'assistant' && last.content) {
+      play(last.content).catch(() => {});
+    }
+  }, [messages, play]);
+
+  return null;
 }
 
 const styles = StyleSheet.create({

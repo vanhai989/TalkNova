@@ -15,6 +15,7 @@ if linkage != nil
 end
 
 target 'TalkNova' do
+  ENV['REACT_NATIVE_NODE_MODULES_DIR'] ||= File.expand_path('../node_modules', __dir__)
   config = use_native_modules!
 
   use_react_native!(
